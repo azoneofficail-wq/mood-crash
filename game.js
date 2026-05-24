@@ -9,6 +9,9 @@ const BUMPERS_ELIMINATION_CREDIT_SECONDS = 12;
 const POWERUP_RADIUS = 34;
 const POWERUP_LIMIT = 4;
 const POWERUP_SPAWN_SECONDS = 5;
+const MAX_PARTICLES = 220;
+const MAX_TIRE_MARKS = 260;
+const MAX_CANVAS_PIXELS = 2560 * 2560;
 const POWERUP_TYPES = [
   { id: 'slam', name: 'Mega Hit', color: '#ffcc33', duration: 10, knockback: 4.4 },
   { id: 'pulse', name: 'Shockwave', color: '#66ffa3', duration: 0, knockback: 1 },
@@ -231,6 +234,7 @@ let waitingForOnlineStart = false;
 let matchCountdown = 0;
 let matchCountdownActive = false;
 let countdownStartedAt = 0;
+const carBodyPathCache = new Map();
 
 function getMaxBoosts() {
   return selectedMode === 'bumpers' ? BUMPERS_MAX_BOOSTS : CRASH_MAX_BOOSTS;
@@ -242,6 +246,22 @@ function pickBumpersMap() {
 
 function pickCrashMap() {
   selectedCrashMap = CRASH_MAPS[Math.floor(Math.random() * CRASH_MAPS.length)];
+}
+
+function pickOnlineMaps() {
+  const seed = [...onlinePeers.keys(), onlineId || 'local'].sort().join('|');
+  const hash = hashText(seed || 'mood-crash');
+  selectedCrashMap = CRASH_MAPS[hash % CRASH_MAPS.length];
+  selectedBumpersMap = BUMPERS_MAPS[hash % BUMPERS_MAPS.length];
+}
+
+function hashText(text) {
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return Math.abs(hash);
 }
 
 function getSpawnPoints() {
@@ -370,7 +390,11 @@ function connectOnline() {
   });
 
   onlineSocket.addEventListener('message', (event) => {
-    handleOnlineMessage(JSON.parse(event.data));
+    try {
+      handleOnlineMessage(JSON.parse(event.data));
+    } catch {
+      updateOnlineStatus('Multiplayer message error');
+    }
   });
 
   onlineSocket.addEventListener('close', () => {
@@ -563,11 +587,13 @@ function startGame() {
   resetControls();
   selectedMode = modeButtons.find((button) => button.classList.contains('active'))?.dataset.mode || 'crash';
   selectedMatchType = matchButtons.find((button) => button.classList.contains('active'))?.dataset.matchType || 'bots';
-  if (selectedMode === 'bumpers') pickBumpersMap();
-  if (selectedMode === 'crash') pickCrashMap();
   if (selectedMatchType === 'online') {
     connectOnline();
     sendOnlineJoin();
+    pickOnlineMaps();
+  } else {
+    if (selectedMode === 'bumpers') pickBumpersMap();
+    if (selectedMode === 'crash') pickCrashMap();
   }
   buildArena();
   cars = [];
@@ -866,7 +892,7 @@ function getAiInput(car, now, dt) {
   const opponents = cars.filter((other) => other !== car && !other.eliminated);
   const target =
     opponents.find((other) => other.id === car.aiTargetId) ||
-    opponents.sort((a, b) => scoreTarget(car, b) - scoreTarget(car, a))[0];
+    getBestTarget(car, opponents);
 
   if (!target) return { left: false, right: false, gas: false, brake: true };
 
@@ -931,7 +957,7 @@ function updateAiMemory(car, now, dt) {
   if (now < car.aiDecisionAt) return;
 
   const opponents = cars.filter((other) => other !== car && !other.eliminated);
-  const target = opponents.sort((a, b) => scoreTarget(car, b) - scoreTarget(car, a))[0];
+  const target = getBestTarget(car, opponents);
   car.aiTargetId = target?.id ?? null;
   car.aiOffset = Math.random() > 0.5 ? 1 : -1;
   car.aiDecisionAt = now + 650 + Math.random() * 900;
@@ -942,6 +968,19 @@ function scoreTarget(car, target) {
   const lowHealthBonus = 100 - target.health;
   const playerBonus = target.isPlayer ? 80 * car.aiAggression : 0;
   return lowHealthBonus * 1.4 + playerBonus - distValue * 0.08;
+}
+
+function getBestTarget(car, opponents) {
+  let best = null;
+  let bestScore = -Infinity;
+  opponents.forEach((target) => {
+    const nextScore = scoreTarget(car, target);
+    if (nextScore > bestScore) {
+      best = target;
+      bestScore = nextScore;
+    }
+  });
+  return best;
 }
 
 function nearestWallPressure(car) {
@@ -959,14 +998,20 @@ function nearestWallPressure(car) {
 }
 
 function nearestObstaclePressure(car) {
-  const obstacle = obstacles
-    .map((item) => ({ item, dist: Math.hypot(item.x - car.x, item.y - car.y) - item.r }))
-    .sort((a, b) => a.dist - b.dist)[0];
+  let nearest = null;
+  let nearestDistance = Infinity;
+  obstacles.forEach((item) => {
+    const distValue = Math.hypot(item.x - car.x, item.y - car.y) - item.r;
+    if (distValue < nearestDistance) {
+      nearest = item;
+      nearestDistance = distValue;
+    }
+  });
 
-  if (!obstacle || obstacle.dist > 185) return { active: false, angle: 0 };
+  if (!nearest || nearestDistance > 185) return { active: false, angle: 0 };
 
-  const awayX = car.x - obstacle.item.x;
-  const awayY = car.y - obstacle.item.y;
+  const awayX = car.x - nearest.x;
+  const awayY = car.y - nearest.y;
   return { active: true, angle: Math.atan2(awayX, -awayY) };
 }
 
@@ -1258,7 +1303,9 @@ function drawGame() {
   drawTireMarks();
   drawObstacles();
   drawPowerUps();
-  cars.filter((car) => !car.eliminated).forEach(drawCar);
+  cars.forEach((car) => {
+    if (!car.eliminated) drawCar(car);
+  });
   drawParticles();
   ctx.restore();
 }
@@ -1878,6 +1925,8 @@ function drawWheel(x, y, steer) {
 }
 
 function createCarBodyPath(shape) {
+  if (carBodyPathCache.has(shape)) return carBodyPathCache.get(shape);
+
   const body = new Path2D();
 
   if (shape === 'truck' || shape === 'armored') {
@@ -1889,6 +1938,7 @@ function createCarBodyPath(shape) {
     body.lineTo(-w + 12, 76);
     body.quadraticCurveTo(-w, 74, -w, 62);
     body.closePath();
+    carBodyPathCache.set(shape, body);
     return body;
   }
 
@@ -1898,6 +1948,7 @@ function createCarBodyPath(shape) {
     body.bezierCurveTo(20, 68, -20, 68, -35, 52);
     body.bezierCurveTo(-34, -25, -24, -55, 0, -76);
     body.closePath();
+    carBodyPathCache.set(shape, body);
     return body;
   }
 
@@ -1909,6 +1960,7 @@ function createCarBodyPath(shape) {
     body.lineTo(-31, -16);
     body.bezierCurveTo(-31, -39, -24, -56, 0, -58);
     body.closePath();
+    carBodyPathCache.set(shape, body);
     return body;
   }
 
@@ -1920,6 +1972,7 @@ function createCarBodyPath(shape) {
     body.lineTo(-39, -20);
     body.bezierCurveTo(-38, -45, -31, -64, 0, -66);
     body.closePath();
+    carBodyPathCache.set(shape, body);
     return body;
   }
 
@@ -1931,6 +1984,7 @@ function createCarBodyPath(shape) {
     body.bezierCurveTo(-33, 49, -42, 7, -32, -28);
     body.bezierCurveTo(-28, -48, -20, -68, 0, -78);
     body.closePath();
+    carBodyPathCache.set(shape, body);
     return body;
   }
 
@@ -1942,6 +1996,7 @@ function createCarBodyPath(shape) {
   body.bezierCurveTo(-39, 27, -40, -15, -34, -31);
   body.bezierCurveTo(-31, -52, -23, -65, 0, -67);
   body.closePath();
+  carBodyPathCache.set(shape, body);
   return body;
 }
 
@@ -2077,7 +2132,7 @@ function drawRivetLine(x, y, count) {
 
 function addTireMark(car) {
   tireMarks.push({ x: car.x, y: car.y, angle: car.angle, life: 1 });
-  if (tireMarks.length > 420) tireMarks.shift();
+  if (tireMarks.length > MAX_TIRE_MARKS) tireMarks.splice(0, tireMarks.length - MAX_TIRE_MARKS);
 }
 
 function drawTireMarks() {
@@ -2095,7 +2150,10 @@ function drawTireMarks() {
 }
 
 function burst(x, y, color, count) {
-  for (let i = 0; i < count; i += 1) {
+  if (particles.length > MAX_PARTICLES) return;
+  const available = Math.max(0, MAX_PARTICLES - particles.length);
+  const nextCount = Math.min(count, available);
+  for (let i = 0; i < nextCount; i += 1) {
     const angle = Math.random() * Math.PI * 2;
     const speed = 80 + Math.random() * 260;
     particles.push({
@@ -2110,14 +2168,15 @@ function burst(x, y, color, count) {
 }
 
 function updateParticles(dt) {
-  particles.forEach((particle) => {
+  for (let i = particles.length - 1; i >= 0; i -= 1) {
+    const particle = particles[i];
     particle.x += particle.vx * dt;
     particle.y += particle.vy * dt;
     particle.vx *= 0.96;
     particle.vy *= 0.96;
     particle.life -= dt;
-  });
-  particles = particles.filter((particle) => particle.life > 0);
+    if (particle.life <= 0) particles.splice(i, 1);
+  }
 }
 
 function drawParticles() {
@@ -2239,11 +2298,17 @@ function resizeCanvas() {
   const rect = canvas.getBoundingClientRect();
   viewWidth = Math.max(360, rect.width);
   viewHeight = Math.max(560, rect.height);
-  const targetWidth = viewWidth >= viewHeight ? 3840 : 2160;
-  const targetHeight = viewWidth >= viewHeight ? 2160 : 3840;
-  const deviceScale = Math.max(window.devicePixelRatio || 1, 3);
-  canvas.width = Math.max(Math.floor(viewWidth * deviceScale), targetWidth);
-  canvas.height = Math.max(Math.floor(viewHeight * deviceScale), targetHeight);
+  const deviceScale = clamp(window.devicePixelRatio || 1, 1, 2.25);
+  let nextWidth = Math.floor(viewWidth * deviceScale);
+  let nextHeight = Math.floor(viewHeight * deviceScale);
+  const pixels = nextWidth * nextHeight;
+  if (pixels > MAX_CANVAS_PIXELS) {
+    const scaleDown = Math.sqrt(MAX_CANVAS_PIXELS / pixels);
+    nextWidth = Math.floor(nextWidth * scaleDown);
+    nextHeight = Math.floor(nextHeight * scaleDown);
+  }
+  canvas.width = nextWidth;
+  canvas.height = nextHeight;
   renderScaleX = canvas.width / viewWidth;
   renderScaleY = canvas.height / viewHeight;
   ctx.imageSmoothingEnabled = true;
