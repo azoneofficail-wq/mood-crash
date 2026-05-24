@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#050505" />
+    <title>Mood Crash</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <section id="setupScreen" class="screen setup-screen">
+        <div class="brand">
+          <span>MOOD</span>
+          <strong>CRASH</strong>
+        </div>
+        <p class="tagline">Ram, dodge, and survive. Every car has health. The last car standing wins.</p>
+
+        <div class="setup-panel">
+          <label>
+            Your name
+            <input id="playerName" value="You" maxlength="18" />
+          </label>
+          <label>
+            Match size
+            <select id="playerCount">
+              <option value="1">1v1</option>
+              <option value="3" selected>4 cars</option>
+            </select>
+          </label>
+          <div>
+            <strong class="chooser-title">Players</strong>
+            <div class="mode-chooser" aria-label="Choose player type">
+              <button class="active" data-match-type="bots" type="button">
+                <strong>Bots</strong>
+                <small>Play right away against computer cars.</small>
+              </button>
+              <button data-match-type="online" type="button">
+                <strong>Real Players</strong>
+                <small>Connect browsers to the same local match.</small>
+              </button>
+            </div>
+            <div id="onlineStatus" class="online-status">Offline</div>
+          </div>
+          <div>
+            <strong class="chooser-title">Game mode</strong>
+            <div class="mode-chooser" aria-label="Choose game mode">
+              <button class="active" data-mode="crash" type="button">
+                <strong>Mood Crash</strong>
+                <small>Health battle. Last car standing wins.</small>
+              </button>
+              <button data-mode="bumpers" type="button">
+                <strong>Bumpers</strong>
+                <small>Sky platform with power-ups. Knock cars off the map.</small>
+              </button>
+            </div>
+          </div>
+          <div>
+            <strong class="chooser-title">Choose your car</strong>
+            <div id="carChooser" class="car-chooser" aria-label="Choose your car"></div>
+          </div>
+          <div class="battle-tips">
+            <span>Hit enemies from the side or rear for bigger damage.</span>
+            <span>Use BACK to reverse or brake before a turn.</span>
+          </div>
+          <button id="startGameButton" class="primary-button" type="button">Start arena battle</button>
+        </div>
+      </section>
+
+      <section id="gameScreen" class="screen game-screen hidden">
+        <div id="boostHud" class="boost-hud">Boosts: 3/3</div>
+        <canvas id="gameCanvas" width="720" height="1280" aria-label="Car battle arena"></canvas>
+
+        <div class="run-actions">
+          <button id="restartRunButton" type="button">Restart</button>
+          <button id="finishRunButton" type="button">End battle</button>
+        </div>
+
+        <div class="touch-controls" aria-label="Driving controls">
+          <button data-control="left" type="button" aria-label="Steer left">&lt;</button>
+          <button data-control="brake" type="button" aria-label="Reverse">BACK</button>
+          <button data-control="gas" type="button" aria-label="Drive forward">GO</button>
+          <button data-control="right" type="button" aria-label="Steer right">&gt;</button>
+          <button id="boostButton" data-control="boost" type="button" aria-label="Boost">BOOST</button>
+        </div>
+      </section>
+
+      <section id="resultsScreen" class="screen results-screen hidden">
+        <div class="results-card">
+          <small>Winner</small>
+          <h1 id="winnerName">You</h1>
+          <p id="winnerScore">Last car standing</p>
+          <div id="leaderboard" class="leaderboard"></div>
+          <button id="playAgainButton" class="primary-button" type="button">Play again</button>
+        </div>
+      </section>
+    </div>
+
+    <script src="game.js"></script>
+  </body>
+</html>
